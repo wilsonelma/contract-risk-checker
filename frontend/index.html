@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>계약서 리스크 체커</title>
+<style>
+  body { font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
+  h1 { font-size: 22px; }
+  .disclaimer { background: #fff8e1; border: 1px solid #ffe082; padding: 12px; border-radius: 8px; font-size: 13px; margin-bottom: 24px; }
+  #drop { border: 2px dashed #ccc; border-radius: 8px; padding: 32px; text-align: center; cursor: pointer; }
+  #drop.drag { border-color: #4a90d9; background: #f0f7ff; }
+  #status { margin: 16px 0; font-size: 14px; color: #555; }
+  .score { font-size: 32px; font-weight: bold; }
+  .summary { margin: 8px 0 24px; line-height: 1.5; }
+  .clause { border-left: 4px solid #ccc; padding: 10px 14px; margin-bottom: 14px; border-radius: 4px; background: #fafafa; }
+  .clause.high { border-color: #d32f2f; }
+  .clause.medium { border-color: #f9a825; }
+  .clause.low { border-color: #689f38; }
+  .quote { font-style: italic; color: #333; margin-bottom: 6px; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; color: white; margin-bottom: 6px; }
+  .badge.high { background: #d32f2f; }
+  .badge.medium { background: #f9a825; }
+  .badge.low { background: #689f38; }
+  .reason { margin: 6px 0; }
+  .suggestion { color: #1565c0; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>계약서 리스크 체커</h1>
+  <div class="disclaimer">
+    본 서비스는 법률 자문이 아니며, 계약서 검토를 위한 1차 정보 제공 도구입니다. 최종 판단은 전문가(변호사)와 상담하세요.
+  </div>
+
+  <input type="file" id="fileInput" accept="application/pdf" style="display:none">
+  <div id="drop">PDF 파일을 끌어다 놓거나 클릭해서 업로드하세요</div>
+  <div id="status"></div>
+  <div id="result"></div>
+
+  <script>
+    const drop = document.getElementById("drop");
+    const fileInput = document.getElementById("fileInput");
+    const status = document.getElementById("status");
+    const result = document.getElementById("result");
+
+    drop.addEventListener("click", () => fileInput.click());
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      drop.classList.remove("drag");
+      if (e.dataTransfer.files.length) analyze(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files.length) analyze(fileInput.files[0]);
+    });
+
+    async function analyze(file) {
+      result.innerHTML = "";
+      status.textContent = "분석 중입니다... (최대 30초 정도 걸릴 수 있어요)";
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const res = await fetch("/api/analyze", { method: "POST", body: formData });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "분석에 실패했습니다.");
+        }
+        const data = await res.json();
+        render(data);
+        status.textContent = "";
+      } catch (e) {
+        status.textContent = "오류: " + e.message;
+      }
+    }
+
+    function render(data) {
+      const riskColor = data.overall_risk_score >= 70 ? "#d32f2f" : data.overall_risk_score >= 40 ? "#f9a825" : "#689f38";
+      let html = `
+        <div class="score" style="color:${riskColor}">위험도 ${data.overall_risk_score}/100</div>
+        <div class="summary">${escapeHtml(data.summary)}</div>
+      `;
+      for (const c of data.clauses) {
+        html += `
+          <div class="clause ${c.risk_level}">
+            <span class="badge ${c.risk_level}">${labelFor(c.risk_level)}</span>
+            <div class="quote">"${escapeHtml(c.quote)}"</div>
+            <div class="reason">${escapeHtml(c.reason)}</div>
+            <div class="suggestion">제안: ${escapeHtml(c.suggestion)}</div>
+          </div>
+        `;
+      }
+      result.innerHTML = html;
+    }
+
+    function labelFor(level) {
+      return { high: "위험", medium: "주의", low: "참고" }[level] || level;
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement("div");
+      div.textContent = s;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>
