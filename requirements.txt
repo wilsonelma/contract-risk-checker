@@ -4,3 +4,4 @@ python-multipart
 pdfplumber
 anthropic
 python-dotenv
+Pillow

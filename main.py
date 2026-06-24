@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 from starlette.responses import Response
 
 load_dotenv()
@@ -23,8 +24,11 @@ if not SITE_PASSWORD:
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-MAX_FILE_SIZE = 10 * 1024 * 1024
+MAX_FILE_SIZE = 25 * 1024 * 1024
 MAX_CHARS = 30000
+MAX_IMAGE_DIMENSION = 1568
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 app = FastAPI(title="계약서 리스크 체커")
 app.add_middleware(
@@ -104,20 +108,53 @@ def extract_text(pdf_bytes: bytes) -> str:
     return "\n".join(text_parts)
 
 
+def prepare_image(image_bytes: bytes) -> str:
+    image = Image.open(io.BytesIO(image_bytes))
+    image = image.convert("RGB")
+
+    if max(image.size) > MAX_IMAGE_DIMENSION:
+        image.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.LANCZOS)
+
+    quality = 85
+    while True:
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=quality)
+        if buffer.tell() <= MAX_IMAGE_BYTES or quality <= 40:
+            break
+        quality -= 15
+
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
 @app.post("/api/analyze")
 async def analyze_contract(file: UploadFile = File(...)):
-    if file.content_type != "application/pdf":
-        raise HTTPException(400, "PDF 파일만 업로드할 수 있습니다.")
+    is_pdf = file.content_type == "application/pdf"
+    is_image = file.content_type in IMAGE_CONTENT_TYPES
+    if not is_pdf and not is_image:
+        raise HTTPException(400, "PDF 또는 이미지(JPEG/PNG/WEBP) 파일만 업로드할 수 있습니다.")
 
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(400, "파일 크기는 10MB를 초과할 수 없습니다.")
+        raise HTTPException(400, "파일 크기는 25MB를 초과할 수 없습니다.")
 
-    text = extract_text(contents)
-    if not text.strip():
-        raise HTTPException(422, "PDF에서 텍스트를 추출할 수 없습니다. 스캔본인 경우 OCR이 필요합니다.")
-
-    text = text[:MAX_CHARS]
+    if is_pdf:
+        text = extract_text(contents)
+        if not text.strip():
+            raise HTTPException(422, "PDF에서 텍스트를 추출할 수 없습니다. 스캔본인 경우 이미지 파일로 업로드해보세요.")
+        text = text[:MAX_CHARS]
+        user_content = f"다음 계약서를 분석해주세요:\n\n{text}"
+    else:
+        try:
+            image_b64 = prepare_image(contents)
+        except Exception:
+            raise HTTPException(422, "이미지를 읽을 수 없습니다. 다른 파일로 시도해주세요.")
+        user_content = [
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64},
+            },
+            {"type": "text", "text": "이 사진에 담긴 계약서를 분석해주세요."},
+        ]
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
@@ -125,7 +162,7 @@ async def analyze_contract(file: UploadFile = File(...)):
         system=SYSTEM_PROMPT,
         tools=[RISK_TOOL],
         tool_choice={"type": "tool", "name": "report_contract_risks"},
-        messages=[{"role": "user", "content": f"다음 계약서를 분석해주세요:\n\n{text}"}],
+        messages=[{"role": "user", "content": user_content}],
     )
 
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
