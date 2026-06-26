@@ -24,20 +24,128 @@
   .badge.low { background: #689f38; }
   .reason { margin: 6px 0; }
   .suggestion { color: #1565c0; font-size: 13px; }
+  .auth-box { max-width: 360px; margin: 60px auto; }
+  .auth-box h1 { text-align: center; }
+  .tabs { display: flex; margin-bottom: 16px; border-bottom: 1px solid #ddd; }
+  .tab { flex: 1; text-align: center; padding: 10px; cursor: pointer; color: #888; }
+  .tab.active { color: #1565c0; border-bottom: 2px solid #1565c0; font-weight: bold; }
+  .auth-box input { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  .auth-box button { width: 100%; padding: 10px; background: #1565c0; color: white; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; }
+  .auth-error { color: #d32f2f; font-size: 13px; margin-bottom: 10px; min-height: 18px; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .topbar .email { font-size: 13px; color: #555; }
+  .topbar button { background: none; border: none; color: #1565c0; cursor: pointer; font-size: 13px; }
+  .hidden { display: none; }
 </style>
 </head>
 <body>
-  <h1>계약서 리스크 체커</h1>
-  <div class="disclaimer">
-    본 서비스는 법률 자문이 아니며, 계약서 검토를 위한 1차 정보 제공 도구입니다. 최종 판단은 전문가(변호사)와 상담하세요.
+  <div id="auth" class="auth-box hidden">
+    <h1>계약서 리스크 체커</h1>
+    <div class="tabs">
+      <div class="tab active" id="loginTab">로그인</div>
+      <div class="tab" id="signupTab">무료 회원가입</div>
+    </div>
+    <div class="auth-error" id="authError"></div>
+    <input type="email" id="authEmail" placeholder="이메일">
+    <input type="password" id="authPassword" placeholder="비밀번호 (8자 이상)">
+    <button id="authSubmit">로그인</button>
   </div>
 
-  <input type="file" id="fileInput" accept="application/pdf,image/jpeg,image/png,image/webp" style="display:none">
-  <div id="drop">PDF 또는 사진(JPEG/PNG/WEBP) 파일을 끌어다 놓거나 클릭해서 업로드하세요</div>
-  <div id="status"></div>
-  <div id="result"></div>
+  <div id="app" class="hidden">
+    <div class="topbar">
+      <span class="email" id="userEmail"></span>
+      <button id="logoutBtn">로그아웃</button>
+    </div>
+    <h1>계약서 리스크 체커</h1>
+    <div class="disclaimer">
+      본 서비스는 법률 자문이 아니며, 계약서 검토를 위한 1차 정보 제공 도구입니다. 최종 판단은 전문가(변호사)와 상담하세요.
+    </div>
+
+    <input type="file" id="fileInput" accept="application/pdf,image/jpeg,image/png,image/webp" style="display:none">
+    <div id="drop">PDF 또는 사진(JPEG/PNG/WEBP) 파일을 끌어다 놓거나 클릭해서 업로드하세요</div>
+    <div id="status"></div>
+    <div id="result"></div>
+  </div>
 
   <script>
+    const authBox = document.getElementById("auth");
+    const appBox = document.getElementById("app");
+    const loginTab = document.getElementById("loginTab");
+    const signupTab = document.getElementById("signupTab");
+    const authError = document.getElementById("authError");
+    const authEmail = document.getElementById("authEmail");
+    const authPassword = document.getElementById("authPassword");
+    const authSubmit = document.getElementById("authSubmit");
+    const userEmail = document.getElementById("userEmail");
+    const logoutBtn = document.getElementById("logoutBtn");
+
+    let authMode = "login";
+
+    function setAuthMode(mode) {
+      authMode = mode;
+      authError.textContent = "";
+      loginTab.classList.toggle("active", mode === "login");
+      signupTab.classList.toggle("active", mode === "signup");
+      authSubmit.textContent = mode === "login" ? "로그인" : "무료로 시작하기";
+    }
+
+    loginTab.addEventListener("click", () => setAuthMode("login"));
+    signupTab.addEventListener("click", () => setAuthMode("signup"));
+
+    [authEmail, authPassword].forEach(el => {
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") authSubmit.click(); });
+    });
+
+    authSubmit.addEventListener("click", async () => {
+      authError.textContent = "";
+      const email = authEmail.value.trim();
+      const password = authPassword.value;
+      const path = authMode === "login" ? "/api/login" : "/api/signup";
+
+      try {
+        const res = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || "요청에 실패했습니다.");
+        }
+        await showApp(email);
+      } catch (e) {
+        authError.textContent = e.message;
+      }
+    });
+
+    logoutBtn.addEventListener("click", async () => {
+      await fetch("/api/logout", { method: "POST" });
+      appBox.classList.add("hidden");
+      authBox.classList.remove("hidden");
+      authEmail.value = "";
+      authPassword.value = "";
+    });
+
+    async function showApp(email) {
+      userEmail.textContent = email;
+      authBox.classList.add("hidden");
+      appBox.classList.remove("hidden");
+    }
+
+    async function checkSession() {
+      try {
+        const res = await fetch("/api/me");
+        if (res.ok) {
+          const data = await res.json();
+          await showApp(data.email);
+          return;
+        }
+      } catch (e) {}
+      authBox.classList.remove("hidden");
+    }
+
+    checkSession();
+
     const drop = document.getElementById("drop");
     const fileInput = document.getElementById("fileInput");
     const status = document.getElementById("status");
