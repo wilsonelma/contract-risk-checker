@@ -9,5 +9,3 @@ services:
         sync: false
       - key: HTTPS
         value: "true"
-      - key: ADMIN_TOKEN
-        sync: false
