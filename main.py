@@ -11,7 +11,7 @@ import time
 import pdfplumber
 import anthropic
 from dotenv import load_dotenv
-from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -212,6 +212,21 @@ async def logout(session: str | None = Cookie(default=None)):
 @app.get("/api/me")
 async def me(user: dict = Depends(get_current_user)):
     return {"email": user["email"]}
+
+
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN")
+
+
+@app.get("/api/admin/stats")
+async def admin_stats(x_admin_token: str | None = Header(default=None)):
+    if not ADMIN_TOKEN or not x_admin_token or not hmac.compare_digest(x_admin_token, ADMIN_TOKEN):
+        raise HTTPException(404)
+    conn = get_db()
+    try:
+        user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    finally:
+        conn.close()
+    return {"user_count": user_count}
 
 RISK_TOOL = {
     "name": "report_contract_risks",
